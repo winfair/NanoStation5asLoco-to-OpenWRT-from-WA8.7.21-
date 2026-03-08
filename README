@@ -1,0 +1,77 @@
+=============================================================
+  OpenWrt Flash Guide - Ubiquiti NanoStation 5AC Loco
+  AirOS WA.v8.7.21 -> OpenWrt 24.10.4
+=============================================================
+
+REQUIRED FILES (add these .bin files to this folder):
+- WA.v8.7.21.48401.251212.0937.bin
+- openwrt-24.10.4-ath79-generic-ubnt_nanostation-ac-loco-squashfs-sysupgrade.bin
+
+PC NETWORK SETTINGS:
+  IP: 192.168.1.2 | Subnet: 255.255.255.0 | Gateway: 192.168.1.1
+
+=============================================================
+PROCEDURE:
+=============================================================
+
+STEP 1 - SCP files to device (from PowerShell):
+  scp -O WA.v8.7.21.48401.251212.0937.bin <user>@192.168.1.20:/tmp
+  scp -O openwrt-24.10.4-ath79-generic-ubnt_nanostation-ac-loco-squashfs-sysupgrade.bin <user>@192.168.1.20:/tmp
+
+STEP 2 - SSH in:
+  ssh <user>@192.168.1.20
+  (If host key error: ssh-keygen -R 192.168.1.20)
+
+STEP 3 - Patch fwupdate binary (WA.v8.7.21 specific patch string):
+  hexdump -Cv /bin/ubntbox | sed 's/12 e0 fe 27/00 00 00 00/g' | hexdump -R > /tmp/fwupdate.real
+  chmod +x /tmp/fwupdate.real
+
+  NOTE: For other firmware versions, find your patch string with:
+  hexdump -Cv /bin/ubntbox | grep "fe 27"
+
+STEP 4 - Create flash script (run each line individually):
+  echo 'fwupdate.real -m /tmp/WA.v8.7.21.48401.251212.0937.bin -d &' > /tmp/flash.sh
+  echo 'sleep 3' >> /tmp/flash.sh
+  echo 'kill %1' >> /tmp/flash.sh
+  echo 'sleep 1' >> /tmp/flash.sh
+  echo 'dd if=/tmp/openwrt-24.10.4-ath79-generic-ubnt_nanostation-ac-loco-squashfs-sysupgrade.bin of=/dev/mtdblock2 bs=4096 count=256' >> /tmp/flash.sh
+  echo 'dd if=/tmp/openwrt-24.10.4-ath79-generic-ubnt_nanostation-ac-loco-squashfs-sysupgrade.bin of=/dev/mtdblock3 bs=4096 skip=256' >> /tmp/flash.sh
+  echo 'reboot' >> /tmp/flash.sh
+  chmod +x /tmp/flash.sh
+
+  Verify: cat /tmp/flash.sh
+
+STEP 5 - Run it:
+  /tmp/flash.sh
+  (If reboot segfaults: echo b > /proc/sysrq-trigger)
+
+STEP 6 - Ping until OpenWrt responds:
+  ping -t 192.168.1.1
+
+STEP 7 - Access OpenWrt:
+  Browser: http://192.168.1.1
+  Username: root | Password: (blank)
+  Set password immediately: System -> Administration
+
+=============================================================
+IMPORTANT NOTES:
+=============================================================
+- /tmp clears on every reboot - re-SCP files if device reboots
+- AirOS web UI: http://192.168.1.20 (before flash)
+- OpenWrt web UI: http://192.168.1.1 (after flash)
+- Use OpenWrt 24.10.3 or later to avoid read-only flash bug
+- No soldering or UART required
+
+=============================================================
+HOW IT WORKS:
+=============================================================
+1. SIGNATURE BYPASS: We patch the branch instruction in ubntbox
+   (12 e0 fe 27 on WA.v8.7.21) to NOPs so signature check always passes.
+
+2. PARTITION UNLOCK + DD: We run fwupdate briefly to unlock MTD partitions,
+   kill it before it finishes, then write OpenWrt directly with dd.
+
+3. IMAGE SPLIT: Sysupgrade image is split across two partitions:
+   - First 1MB (256 blocks) -> kernel (mtdblock2)
+   - Remainder -> rootfs (mtdblock3)
+=============================================================
